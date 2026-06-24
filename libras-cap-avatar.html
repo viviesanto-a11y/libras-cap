@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Captura Libras → Avatar + BVH</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #0d1117; color: #e6edf3; }
+
+    header {
+      background: #161b22;
+      padding: 12px 16px;
+      border-bottom: 2px solid #2E75B6;
+      display: flex; align-items: center; gap: 10px;
+    }
+    header h1 { font-size: 16px; color: #58a6ff; }
+
+    /* ── LAYOUT DUPLO: câmera + avatar lado a lado ── */
+    .tela-dupla {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      max-width: 960px;
+      margin: 0 auto;
+      gap: 4px;
+    }
+
+    .video-wrapper { position: relative; width: 100%; }
+    video  { width: 100%; display: block; }
+    canvas#canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+    #avatar-wrap { position: relative; background: #0d1117; }
+    #avatar-wrap canvas { display: block; width: 100%; height: 100%; }
+    #avatar-label {
+      position: absolute; top: 8px; left: 8px;
+      background: rgba(0,0,0,0.6); color: #7B5EA7;
+      font-size: 11px; font-weight: bold;
+      padding: 3px 8px; border-radius: 6px;
+      letter-spacing: 1px; text-transform: uppercase;
+    }
+    #avatar-status {
+      position: absolute; bottom: 8px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7); color: #8b949e;
+      font-size: 11px; padding: 3px 10px; border-radius: 6px;
+      white-space: nowrap;
+    }
+
+    .painel { padding: 12px; display: flex; flex-direction: column; gap: 12px; max-width: 960px; margin: 0 auto; }
+
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 12px; }
+    .card h3 { font-size: 11px; color: #8b949e; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+
+    .indicadores { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .ind { background: #0d1117; border-radius: 8px; padding: 10px; text-align: center; border: 1px solid #21262d; }
+    .ind .label { font-size: 11px; color: #8b949e; }
+    .ind .valor { font-size: 20px; font-weight: bold; margin-top: 4px; }
+    .ind .valor.ativo  { color: #3fb950; }
+    .ind .valor.inativo{ color: #484f58; }
+
+    .status-linha { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
+    .status-linha:last-child { border-bottom: none; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .dot.on  { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+    .dot.off { background: #484f58; }
+
+    .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    button { flex: 1; padding: 12px 10px; border-radius: 8px; border: none; font-size: 14px; font-weight: bold; cursor: pointer; min-width: 100px; }
+    button:disabled { opacity: 0.35; cursor: default; }
+    .btn-gravar { background: #238636; color: white; }
+    .btn-parar  { background: #da3633; color: white; }
+    .btn-bvh    { background: #6f42c1; color: white; }
+    .btn-json   { background: #1f6feb; color: white; }
+    .btn-limpar { background: #30363d; color: #e6edf3; }
+    .camera-toggle { width: 100%; padding: 10px; background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 8px; font-size: 13px; font-weight: bold; margin-bottom: 10px; }
+
+    /* Botão carregar avatar */
+    #avatar-file-label {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 12px;
+      background: #21262d; border: 1px dashed #7B5EA7;
+      border-radius: 8px; cursor: pointer;
+      font-size: 13px; color: #8b949e;
+      transition: border-color 0.2s;
+      margin-bottom: 8px;
+    }
+    #avatar-file-label:hover { border-color: #9370c2; color: #e6edf3; }
+
+    #log { background: #0d1117; border-radius: 8px; padding: 10px; font-size: 12px; color: #8b949e; max-height: 120px; overflow-y: auto; border: 1px solid #21262d; font-family: monospace; }
+    #log p { margin: 2px 0; }
+    #log p.ok   { color: #3fb950; }
+    #log p.err  { color: #f85149; }
+    #log p.info { color: #58a6ff; }
+
+    .badge { display: inline-block; background: #6f42c1; color: white; font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 10px; margin-left: 6px; }
+
+    @media (max-width: 600px) {
+      .tela-dupla { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <span style="font-size:22px">🖐️</span>
+  <h1>Captura Libras <span class="badge">Avatar + BVH</span></h1>
+</header>
+
+<!-- Câmera + Avatar lado a lado -->
+<div class="tela-dupla">
+  <div class="video-wrapper">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="canvas"></canvas>
+  </div>
+  <div id="avatar-wrap">
+    <canvas id="avatar-canvas"></canvas>
+    <div id="avatar-label">🤙 Avatar Sinalizante</div>
+    <div id="avatar-status">Carregue um avatar .glb abaixo</div>
+  </div>
+</div>
+
+<div class="painel">
+
+  <!-- Avatar -->
+  <div class="card">
+    <h3>🧍 Avatar 3D</h3>
+    <label id="avatar-file-label">
+      <span style="font-size:1.2rem">📁</span>
+      <span id="avatar-file-text">Clique para carregar seu avatar .glb</span>
+      <input type="file" id="avatar-file" accept=".glb,.gltf" style="display:none">
+    </label>
+    <div style="font-size:12px; color:#8b949e">
+      💡 Use modelos com rig (bones). Funciona com <strong style="color:#7B5EA7">ReadyPlayerMe</strong>, Mixamo ou qualquer .glb com esqueleto.
+    </div>
+  </div>
+
+  <!-- Câmera -->
+  <div class="card">
+    <h3>Câmera</h3>
+    <button class="camera-toggle" onclick="trocarCamera()">🔄 Alternar câmera (frente / traseira)</button>
+    <div style="font-size:12px; color:#8b949e">
+      💡 Use a câmera <strong style="color:#58a6ff">traseira</strong> apoiada, mostrando da cintura pra cima.
+    </div>
+  </div>
+
+  <!-- Indicadores -->
+  <div class="card">
+    <h3>Detectando agora</h3>
+    <div class="indicadores">
+      <div class="ind"><div class="label">🤜 Mão Direita</div><div class="valor inativo" id="ind-md">●</div></div>
+      <div class="ind"><div class="label">🤛 Mão Esquerda</div><div class="valor inativo" id="ind-me">●</div></div>
+      <div class="ind"><div class="label">😊 Rosto</div><div class="valor inativo" id="ind-rosto">●</div></div>
+      <div class="ind"><div class="label">🧍 Corpo</div><div class="valor inativo" id="ind-corpo">●</div></div>
+    </div>
+  </div>
+
+  <!-- Gravação -->
+  <div class="card">
+    <h3>Gravação</h3>
+    <div class="status-linha">
+      <div class="dot off" id="dot-gravando"></div>
+      <span id="txt-status">Aguardando início</span>
+    </div>
+    <div class="status-linha">
+      <span style="color:#8b949e">Frames capturados:</span>
+      <span id="frames-count" style="font-size:16px;color:#58a6ff;font-weight:bold;margin-left:8px">0</span>
+    </div>
+    <div class="btns">
+      <button class="btn-gravar" id="btn-gravar" onclick="iniciarGravacao()">⏺ Gravar</button>
+      <button class="btn-parar"  id="btn-parar"  onclick="pararGravacao()" disabled>⏹ Parar</button>
+    </div>
+    <div class="btns">
+      <button class="btn-bvh"    id="btn-bvh"  onclick="baixarBVH()"  disabled>⬇ Baixar .BVH (Blender)</button>
+      <button class="btn-limpar" onclick="limparDados()">🗑 Limpar</button>
+    </div>
+    <div class="btns">
+      <button class="btn-json" id="btn-json" onclick="baixarJSON()" disabled>⬇ Baixar .JSON (backup)</button>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="card">
+    <h3>Log</h3>
+    <div id="log"><p class="info">Iniciando câmera...</p></div>
+  </div>
+
+</div>
+
+<!-- MediaPipe Holistic (igual ao original) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+<!-- Three.js para o avatar -->
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+
+<script type="module">
+import * as THREE from 'three'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+// ══════════════════════════════════════════════
+// PARTE 1 — Código original (câmera + holistic)
+// ══════════════════════════════════════════════
+const video  = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx    = canvas.getContext("2d");
+
+let gravando    = false;
+let frames      = [];
+let frameNum    = 0;
+let cameraAtual = "user";
+let cameraObj   = null;
+const FPS       = 30;
+
+// Armazena resultados para o avatar usar
+let ultimoResultado = null;
+
+const HIERARQUIA = [
+  { nome:"Hips",      pai:-1, pos:23 },
+  { nome:"Spine",     pai:0,  pos:11 },
+  { nome:"LShoulder", pai:1,  pos:11 },
+  { nome:"LElbow",    pai:2,  pos:13 },
+  { nome:"LWrist",    pai:3,  pos:15 },
+  { nome:"RShoulder", pai:1,  pos:12 },
+  { nome:"RElbow",    pai:5,  pos:14 },
+  { nome:"RWrist",    pai:6,  pos:16 },
+  { nome:"Neck",      pai:1,  pos:0  },
+  { nome:"Head",      pai:8,  pos:0  },
+  { nome:"LHip",      pai:0,  pos:23 },
+  { nome:"LKnee",     pai:10, pos:25 },
+  { nome:"LAnkle",    pai:11, pos:27 },
+  { nome:"RHip",      pai:0,  pos:24 },
+  { nome:"RKnee",     pai:13, pos:26 },
+  { nome:"RAnkle",    pai:14, pos:28 },
+];
+
+const holistic = new Holistic({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}`
+});
+holistic.setOptions({
+  modelComplexity: 1,
+  smoothLandmarks: true,
+  enableSegmentation: false,
+  refineFaceLandmarks: true,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+holistic.onResults(onResults);
+
+function iniciarCamera(facingMode) {
+  if (cameraObj) cameraObj.stop();
+  cameraObj = new Camera(video, {
+    onFrame: async () => {
+      canvas.width  = video.videoWidth  || video.clientWidth;
+      canvas.height = video.videoHeight || video.clientHeight;
+      await holistic.send({ image: video });
+    },
+    facingMode, width: 640, height: 480
+  });
+  cameraObj.start()
+    .then(() => log(`Câmera ${facingMode==="user"?"frontal":"traseira"} iniciada ✓`, "ok"))
+    .catch(e => log("Erro câmera: " + e.message, "err"));
+}
+iniciarCamera(cameraAtual);
+window.trocarCamera = () => { cameraAtual = cameraAtual==="user"?"environment":"user"; iniciarCamera(cameraAtual); };
+
+function onResults(res) {
+  canvas.width  = video.videoWidth  || video.clientWidth;
+  canvas.height = video.videoHeight || video.clientHeight;
+  ctx.save();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (cameraAtual === "user") { ctx.scale(-1,1); ctx.translate(-canvas.width,0); }
+  ctx.drawImage(res.image, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
+
+  setInd("ind-md",    !!res.rightHandLandmarks);
+  setInd("ind-me",    !!res.leftHandLandmarks);
+  setInd("ind-rosto", !!res.faceLandmarks);
+  setInd("ind-corpo", !!res.poseLandmarks);
+
+  if (res.poseLandmarks)
+    drawConnectors(ctx, res.poseLandmarks, POSE_CONNECTIONS, {color:"#00CCFF",lineWidth:2});
+  if (res.faceLandmarks)
+    drawConnectors(ctx, res.faceLandmarks, FACEMESH_TESSELATION, {color:"#C0C0C055",lineWidth:1});
+  if (res.rightHandLandmarks)
+    drawConnectors(ctx, res.rightHandLandmarks, HAND_CONNECTIONS, {color:"#00FF88",lineWidth:3});
+  if (res.leftHandLandmarks)
+    drawConnectors(ctx, res.leftHandLandmarks, HAND_CONNECTIONS, {color:"#FFAA00",lineWidth:3});
+
+  [res.rightHandLandmarks, res.leftHandLandmarks].forEach((mao,i) => {
+    if (!mao) return;
+    mao.forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x*canvas.width, p.y*canvas.height, 5, 0, Math.PI*2);
+      ctx.fillStyle = i===0 ? "#00FF88" : "#FFAA00";
+      ctx.fill();
+    });
+  });
+
+  // Salva resultado para o avatar usar
+  ultimoResultado = res;
+
+  if (gravando) {
+    frameNum++;
+    frames.push({
+      frame: frameNum,
+      corpo:        res.poseLandmarks      || null,
+      mao_direita:  res.rightHandLandmarks || null,
+      mao_esquerda: res.leftHandLandmarks  || null,
+      rosto:        res.faceLandmarks ? res.faceLandmarks.slice(0,50) : null
+    });
+    document.getElementById("frames-count").textContent = frameNum;
+  }
+}
+
+// Gravação (igual ao original)
+window.iniciarGravacao = () => {
+  gravando = true;
+  document.getElementById("btn-gravar").disabled = true;
+  document.getElementById("btn-parar").disabled  = false;
+  document.getElementById("dot-gravando").classList.replace("off","on");
+  document.getElementById("txt-status").textContent = "⏺ Gravando...";
+  log("Gravação iniciada", "ok");
+};
+window.pararGravacao = () => {
+  gravando = false;
+  document.getElementById("btn-gravar").disabled = false;
+  document.getElementById("btn-parar").disabled  = true;
+  document.getElementById("btn-bvh").disabled    = false;
+  document.getElementById("btn-json").disabled   = false;
+  document.getElementById("dot-gravando").classList.replace("on","off");
+  document.getElementById("txt-status").textContent = `Concluído — ${frameNum} frames`;
+  log(`Gravação parada. ${frameNum} frames. Pronto para baixar BVH!`, "ok");
+};
+window.limparDados = () => {
+  frames = []; frameNum = 0;
+  document.getElementById("frames-count").textContent = "0";
+  document.getElementById("btn-bvh").disabled  = true;
+  document.getElementById("btn-json").disabled = true;
+  document.getElementById("txt-status").textContent = "Aguardando início";
+  log("Dados limpos", "info");
+};
+
+// BVH (igual ao original)
+function gerarBVH() {
+  if (frames.length === 0) return "";
+  const nOssos = HIERARQUIA.length;
+  let bvh = "HIERARCHY\n";
+  function escreverOsso(idx, nivel) {
+    const osso = HIERARQUIA[idx];
+    const tab  = "  ".repeat(nivel);
+    const filhos = HIERARQUIA.map((_,i)=>i).filter(i => HIERARQUIA[i].pai===idx && i!==idx);
+    const ehRaiz = osso.pai === -1;
+    const ehFolha = filhos.length === 0;
+    bvh += `${tab}${ehRaiz?"ROOT":"JOINT"} ${osso.nome}\n`;
+    bvh += `${tab}{\n`;
+    bvh += `${tab}  OFFSET 0.00 0.00 0.00\n`;
+    if (ehRaiz) bvh += `${tab}  CHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation\n`;
+    else        bvh += `${tab}  CHANNELS 3 Zrotation Xrotation Yrotation\n`;
+    if (ehFolha) { bvh += `${tab}  End Site\n${tab}  {\n${tab}    OFFSET 0.00 10.00 0.00\n${tab}  }\n`; }
+    else filhos.forEach(fi => escreverOsso(fi, nivel+1));
+    bvh += `${tab}}\n`;
+  }
+  escreverOsso(0, 0);
+  bvh += "MOTION\n";
+  bvh += `Frames: ${frames.length}\n`;
+  bvh += `Frame Time: ${(1/FPS).toFixed(6)}\n`;
+  frames.forEach(fr => {
+    if (!fr.corpo) { bvh += Array(6+(nOssos-1)*3).fill("0.00").join(" ")+"\n"; return; }
+    const pts = fr.corpo; const escala = 100;
+    const lhip=pts[23], rhip=pts[24];
+    const hx=((lhip.x+rhip.x)/2)*escala, hy=(1-(lhip.y+rhip.y)/2)*escala, hz=((lhip.z+rhip.z)/2)*escala;
+    let valores=[`${hx.toFixed(4)}`,`${hy.toFixed(4)}`,`${hz.toFixed(4)}`,"0.0000","0.0000","0.0000"];
+    HIERARQUIA.slice(1).forEach(osso => {
+      const pPai=pts[HIERARQUIA[osso.pai].pos], pFi=pts[osso.pos];
+      if (!pPai||!pFi) { valores.push("0.0000","0.0000","0.0000"); return; }
+      const dx=pFi.x-pPai.x, dy=-(pFi.y-pPai.y), dz=pFi.z-pPai.z;
+      const rotX=Math.atan2(dy,dz)*(180/Math.PI);
+      const rotY=Math.atan2(dx,dz)*(180/Math.PI);
+      const rotZ=Math.atan2(dy,dx)*(180/Math.PI);
+      valores.push(rotZ.toFixed(4),rotX.toFixed(4),rotY.toFixed(4));
+    });
+    bvh += valores.join(" ")+"\n";
+  });
+  return bvh;
+}
+window.baixarBVH = () => {
+  if (frames.length===0) { log("Nenhum frame gravado!","err"); return; }
+  const bvh=gerarBVH(), blob=new Blob([bvh],{type:"text/plain"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="libras_captura.bvh"; a.click();
+  log(`BVH gerado: ${frames.length} frames ✓`,"ok");
+};
+window.baixarJSON = () => {
+  const dados={descricao:"Captura Holistic Libras",total_frames:frameNum,frames};
+  const blob=new Blob([JSON.stringify(dados,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="libras_completo.json"; a.click();
+  log("JSON baixado ✓","ok");
+};
+
+function setInd(id, ativo) {
+  const el=document.getElementById(id);
+  el.className=`valor ${ativo?"ativo":"inativo"}`;
+}
+function log(msg, tipo="info") {
+  const div=document.getElementById("log");
+  const p=document.createElement("p");
+  p.className=tipo; p.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
+  div.appendChild(p); div.scrollTop=div.scrollHeight;
+}
+
+// ══════════════════════════════════════════════
+// PARTE 2 — Avatar 3D (Three.js)
+// ══════════════════════════════════════════════
+const avatarCanvas = document.getElementById('avatar-canvas')
+const avatarWrap   = document.getElementById('avatar-wrap')
+
+// Ajusta canvas ao tamanho do wrapper
+function resizeAvatarCanvas() {
+  const w = avatarWrap.clientWidth
+  const h = avatarWrap.clientHeight || 360
+  avatarCanvas.width  = w
+  avatarCanvas.height = h
+  return { w, h }
+}
+resizeAvatarCanvas()
+
+// Cena Three.js
+const { w, h } = resizeAvatarCanvas()
+const renderer = new THREE.WebGLRenderer({ canvas: avatarCanvas, antialias: true, alpha: false })
+renderer.setSize(avatarWrap.clientWidth, avatarWrap.clientHeight || 360)
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+renderer.outputColorSpace = THREE.SRGBColorSpace
+
+const scene = new THREE.Scene()
+scene.background = new THREE.Color(0x0d1117)
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7))
+const key = new THREE.DirectionalLight(0xffffff, 1.2)
+key.position.set(2, 4, 3)
+scene.add(key)
+const fill = new THREE.DirectionalLight(0x7B5EA7, 0.5)
+fill.position.set(-3, 2, -2)
+scene.add(fill)
+
+const camera3d = new THREE.PerspectiveCamera(45, avatarWrap.clientWidth / (avatarWrap.clientHeight || 360), 0.1, 100)
+camera3d.position.set(0, 1.4, 2.5)
+camera3d.lookAt(0, 1.2, 0)
+
+const controls = new OrbitControls(camera3d, avatarCanvas)
+controls.target.set(0, 1.2, 0)
+controls.enableDamping = true
+controls.update()
+
+window.addEventListener('resize', () => {
+  const nw = avatarWrap.clientWidth
+  const nh = avatarWrap.clientHeight || 360
+  camera3d.aspect = nw / nh
+  camera3d.updateProjectionMatrix()
+  renderer.setSize(nw, nh)
+})
+
+// Nodes do avatar
+let nodes = null
+
+// Função para encontrar bone por vários nomes possíveis
+function findBone(ns, ...names) {
+  for (const n of names) if (ns[n]) return ns[n]
+  return null
+}
+
+// Carrega avatar .glb
+document.getElementById('avatar-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0]
+  if (!file) return
+  document.getElementById('avatar-file-text').textContent = '⏳ Carregando ' + file.name + '...'
+  document.getElementById('avatar-status').textContent = 'Carregando avatar...'
+  log('Carregando avatar: ' + file.name, 'info')
+
+  const url = URL.createObjectURL(file)
+  const loader = new GLTFLoader()
+  loader.load(url, (gltf) => {
+    // Remove avatar anterior
+    scene.children.filter(c => c.userData.isAvatar).forEach(c => scene.remove(c))
+
+    const avatar = gltf.scene
+    avatar.userData.isAvatar = true
+    avatar.position.set(0, -0.9, 0)
+
+    // Mapeia todos os nós
+    const ns = {}
+    avatar.traverse(obj => {
+      if (obj.name) ns[obj.name] = obj
+      if (obj.isMesh) obj.frustumCulled = false
+    })
+    nodes = ns
+
+    // Log dos bones encontrados
+    const bones = Object.entries(ns).filter(([k,v]) => v.type === 'Bone').map(([k]) => k)
+    console.log('🦴 Bones:', bones)
+    log(`Avatar carregado! ${bones.length} bones encontrados ✓`, 'ok')
+    document.getElementById('avatar-file-text').textContent = '✅ ' + file.name
+    document.getElementById('avatar-status').textContent = 'Avatar ativo — mova-se!'
+
+    scene.add(avatar)
+  }, (p) => {
+    if (p.total > 0) document.getElementById('avatar-status').textContent =
+      `Carregando... ${Math.round(p.loaded/p.total*100)}%`
+  }, (err) => {
+    log('Erro ao carregar avatar: ' + err.message, 'err')
+    document.getElementById('avatar-status').textContent = 'Erro ao carregar'
+  })
+})
+
+// ── Aplicar pose do MediaPipe no avatar ──────────────────
+function lerp(a, b, t) { return a + (b - a) * t }
+
+function aplicarPose(res) {
+  if (!nodes || !res) return
+
+  const pose = res.poseLandmarks
+  const rMao = res.rightHandLandmarks
+  const lMao = res.leftHandLandmarks
+
+  // ── Corpo ─────────────────────────────────────────────
+  if (pose) {
+    const vis = (i) => (pose[i]?.visibility ?? 0) > 0.4
+
+    // Inclinação do torso
+    const spine = findBone(nodes, 'Spine1', 'Spine', 'spine', 'mixamorigSpine1', 'mixamorigSpine')
+    if (spine && vis(11) && vis(12)) {
+      const tilt = (pose[11].y - pose[12].y) * 1.5
+      spine.rotation.z = lerp(spine.rotation.z, tilt, 0.2)
+    }
+
+    // Braço direito
+    const rArm = findBone(nodes, 'RightArm', 'mixamorigRightArm', 'upperarm_r', 'Upperarm_R')
+    if (rArm && vis(12) && vis(14)) {
+      rArm.rotation.z = lerp(rArm.rotation.z, -(pose[12].y - pose[14].y) * 3, 0.2)
+      rArm.rotation.x = lerp(rArm.rotation.x,  (pose[12].z - pose[14].z) * 2, 0.2)
+    }
+
+    // Braço esquerdo
+    const lArm = findBone(nodes, 'LeftArm', 'mixamorigLeftArm', 'upperarm_l', 'Upperarm_L')
+    if (lArm && vis(11) && vis(13)) {
+      lArm.rotation.z = lerp(lArm.rotation.z, (pose[11].y - pose[13].y) * 3, 0.2)
+      lArm.rotation.x = lerp(lArm.rotation.x, (pose[11].z - pose[13].z) * 2, 0.2)
+    }
+
+    // Antebraço direito
+    const rFore = findBone(nodes, 'RightForeArm', 'mixamorigRightForeArm', 'lowerarm_r')
+    if (rFore && vis(14) && vis(16)) {
+      rFore.rotation.z = lerp(rFore.rotation.z, -(pose[14].y - pose[16].y) * 3, 0.2)
+    }
+
+    // Antebraço esquerdo
+    const lFore = findBone(nodes, 'LeftForeArm', 'mixamorigLeftForeArm', 'lowerarm_l')
+    if (lFore && vis(13) && vis(15)) {
+      lFore.rotation.z = lerp(lFore.rotation.z, (pose[13].y - pose[15].y) * 3, 0.2)
+    }
+
+    // Cabeça
+    const head = findBone(nodes, 'Head', 'head', 'mixamorigHead')
+    const neck = findBone(nodes, 'Neck', 'neck', 'mixamorigNeck')
+    if (head && vis(0) && vis(11) && vis(12)) {
+      const midShoulder = { x: (pose[11].x+pose[12].x)/2, y: (pose[11].y+pose[12].y)/2 }
+      const headTiltX = (pose[0].y - midShoulder.y - 0.3) * -1.5
+      const headTiltY = (pose[0].x - midShoulder.x) * 2
+      head.rotation.x = lerp(head.rotation.x, headTiltX, 0.15)
+      head.rotation.y = lerp(head.rotation.y, headTiltY, 0.15)
+      if (neck) {
+        neck.rotation.x = lerp(neck.rotation.x, headTiltX * 0.5, 0.15)
+        neck.rotation.y = lerp(neck.rotation.y, headTiltY * 0.5, 0.15)
+      }
+    }
+  }
+
+  // ── Mãos ─────────────────────────────────────────────
+  function aplicarMao(lm, side) {
+    if (!lm) return
+    const prefix = side // 'Right' ou 'Left'
+
+    // Punho
+    const wrist = findBone(nodes, `${prefix}Hand`, `mixamorig${prefix}Hand`, `hand_${side[0].toLowerCase()}`)
+    if (wrist) {
+      const dir = new THREE.Vector3(
+        lm[9].x - lm[0].x, -(lm[9].y - lm[0].y), lm[9].z - lm[0].z
+      ).normalize()
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir)
+      wrist.quaternion.slerp(q, 0.3)
+    }
+
+    // Dedos
+    const dedos = [
+      ['Thumb',  [1,2,3,4]],
+      ['Index',  [5,6,7,8]],
+      ['Middle', [9,10,11,12]],
+      ['Ring',   [13,14,15,16]],
+      ['Little', [17,18,19,20]],
+    ]
+    dedos.forEach(([nome, pts]) => {
+      for (let seg = 0; seg < 3; seg++) {
+        const boneName = `${prefix}Hand${nome}${seg+1}`
+        const altName  = `mixamorig${prefix}Hand${nome}${seg+1}`
+        const bone = findBone(nodes, boneName, altName)
+        if (!bone) continue
+        const p1 = lm[pts[seg]], p2 = lm[pts[seg+1]]
+        if (!p1 || !p2) continue
+        const dir = new THREE.Vector3(p2.x-p1.x, -(p2.y-p1.y), p2.z-p1.z).normalize()
+        const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), dir)
+        bone.quaternion.slerp(q, 0.35)
+      }
+    })
+  }
+
+  // MediaPipe Holistic: rightHand = mão direita da PESSOA
+  aplicarMao(rMao, 'Right')
+  aplicarMao(lMao, 'Left')
+}
+
+// ── Render loop ──────────────────────────────────────────
+const renderLoop = () => {
+  requestAnimationFrame(renderLoop)
+  aplicarPose(ultimoResultado)
+  controls.update()
+  renderer.render(scene, camera3d)
+}
+renderLoop()
+
+log('Sistema pronto! Carregue um avatar .glb para começar.', 'ok')
+</script>
+</body>
+</html>
